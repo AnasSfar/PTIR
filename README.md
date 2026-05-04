@@ -1,6 +1,35 @@
 
 # Traitement de trajectoires GPS
 
+## Lancer le script
+
+**Prérequis**
+
+```bash
+pip install -r requirements.txt
+```
+
+**Configuration**
+
+Dans `gps_pipeline.py`, modifie les deux lignes suivantes :
+
+```python
+DATA_DIR = r"chemin/vers/le/dossier"   # dossier contenant le CSV
+CSV_NAME = "12_3332.csv"               # nom du fichier CSV
+```
+
+**Lancement**
+
+```bash
+python gps_pipeline.py
+```
+
+**Sorties générées** (dans le même dossier que le script) :
+- `map_12_3332_segmented_pipeline.html` — carte interactive
+- `map_12_3332_segmented_pipeline_refined.csv` — trajectoires raffinées
+
+---
+
 ## Objectif
 
 L'objectif de ce travail est de transformer des données GPS brutes en trajectoires exploitables afin d'analyser les déplacements (trajets fréquents, portions communes, etc.).
