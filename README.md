@@ -9,15 +9,6 @@
 pip install -r requirements.txt
 ```
 
-**Configuration**
-
-Dans `gps_pipeline.py`, modifie les deux lignes suivantes :
-
-```python
-DATA_DIR = r"chemin/vers/le/dossier"   # dossier contenant le CSV
-CSV_NAME = "12_3332.csv"               # nom du fichier CSV
-```
-
 **Lancement**
 
 ```bash
@@ -55,8 +46,8 @@ Le traitement se fait en 7 étapes.
 
 Avant toute analyse, on fusionne les points consécutifs qui sont à la fois très proches dans l'espace et dans le temps :
 
-* distance ≤ 3 m
-* intervalle ≤ 3 secondes
+* distance ≤ 2 m
+* intervalle ≤ 2 secondes
 
 Ces points sont remplacés par un point moyen (latitude, longitude, dernier timestamp du groupe).
 
