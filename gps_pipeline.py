@@ -1,6 +1,10 @@
 import os
 import math
 import time
+import glob
+import argparse
+import random
+from concurrent.futures import ProcessPoolExecutor, as_completed
 import pandas as pd
 import folium
 from tqdm import tqdm
@@ -11,10 +15,22 @@ from branca.element import Template, MacroElement
 # CONFIG
 # =========================
 
-DATA_DIR = r""
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DATA_DIR = os.path.join(
+    BASE_DIR,
+    "NetMob25CleanedData",
+    "NetMob25CleanedData",
+    "gps_dataset"
+)
 CSV_NAME = "12_3332.csv"
 
 OUTPUT_FILE = "map_12_3332_segmented_pipeline.html"
+BATCH_OUTPUT_FILE = "all_refined_trajectories.csv"
+BATCH_SUMMARY_FILE = "batch_processing_summary.csv"
+RANDOM_MAP_OUTPUT_FILE = "map_random_50_users.html"
+RANDOM_MAP_SUMMARY_FILE = "random_map_summary.csv"
+DEFAULT_WORKERS = 8
+DEFAULT_RANDOM_MAP_USERS = 50
 
 STAYPOINT_TIME_MIN = 10
 STAYPOINT_RADIUS_M = 50
@@ -87,7 +103,7 @@ def load_and_clean_data(file_path):
     return data
 
 
-def light_presampling(data, max_distance_m=10, max_time_seconds=10):
+def light_presampling(data, max_distance_m=10, max_time_seconds=10, show_progress=True):
     """
     Pré-sampling léger :
     fusionne les points consécutifs très proches dans l'espace et dans le temps.
@@ -99,7 +115,12 @@ def light_presampling(data, max_distance_m=10, max_time_seconds=10):
     reduced_points = []
     buffer_points = [data.iloc[0]]
 
-    for i in tqdm(range(1, len(data)), desc="Pré-sampling léger", unit="pt"):
+    for i in tqdm(
+        range(1, len(data)),
+        desc="Pré-sampling léger",
+        unit="pt",
+        disable=not show_progress
+    ):
         previous_point = buffer_points[-1]
         current_point = data.iloc[i]
 
@@ -145,7 +166,7 @@ def light_presampling(data, max_distance_m=10, max_time_seconds=10):
 # SEGMENTATION ANCIENNE
 # =========================
 
-def segment_trajectories_by_staypoints(data):
+def segment_trajectories_by_staypoints(data, show_progress=True):
     """
     Ancienne segmentation :
     si l'utilisateur reste dans un rayon de STAYPOINT_RADIUS_M
@@ -164,7 +185,8 @@ def segment_trajectories_by_staypoints(data):
     progress_bar = tqdm(
         total=total_points,
         desc="Segmentation spatialo-temporelle",
-        unit="pt"
+        unit="pt",
+        disable=not show_progress
     )
 
     while i < total_points:
@@ -323,7 +345,7 @@ def trim_start_end_zones(trajectory, radius_m):
 # MAP
 # =========================
 
-def build_map(all_points, processed_trajectories, merged_staypoints):
+def build_map(all_points, processed_trajectories, merged_staypoints, show_progress=True):
     center = [
         all_points["LATITUDE"].mean(),
         all_points["LONGITUDE"].mean()
@@ -352,7 +374,12 @@ def build_map(all_points, processed_trajectories, merged_staypoints):
     ).add_to(map_object)
 
     for index, trajectory_data in enumerate(
-        tqdm(processed_trajectories, desc="Ajout des trajets à la carte", unit="trajet")
+        tqdm(
+            processed_trajectories,
+            desc="Ajout des trajets à la carte",
+            unit="trajet",
+            disable=not show_progress
+        )
     ):
         color = COLORS[index % len(COLORS)]
 
@@ -625,15 +652,204 @@ def inject_info_panel(
 
 
 # =========================
-# MAIN
+# PIPELINE
 # =========================
 
-def main():
+def get_user_id(csv_path):
+    return os.path.splitext(os.path.basename(csv_path))[0]
+
+
+def build_refined_dataframe(processed_trajectories, user_id, source_file):
+    refined_frames = []
+
+    for index, trajectory_data in enumerate(processed_trajectories):
+        trajectory_id = index + 1
+        trimmed = trajectory_data["trimmed"].copy()
+        trimmed["USER_ID"] = user_id
+        trimmed["SOURCE_FILE"] = source_file
+        trimmed["TRAJECTORY_ID"] = trajectory_id
+        trimmed["TRAJECTORY_UID"] = f"{user_id}_{trajectory_id}"
+        trimmed["POINT_INDEX"] = range(len(trimmed))
+        refined_frames.append(trimmed)
+
+    if not refined_frames:
+        return pd.DataFrame()
+
+    return pd.concat(refined_frames, ignore_index=True)
+
+
+def process_csv_file(csv_path, show_progress=False, verbose=False):
+    start_time = time.time()
+    user_id = get_user_id(csv_path)
+    source_file = os.path.basename(csv_path)
+
+    all_points = load_and_clean_data(csv_path)
+    valid_points = len(all_points)
+
+    before_presampling = len(all_points)
+    all_points = light_presampling(
+        all_points,
+        max_distance_m=PRE_SAMPLE_MAX_DISTANCE_M,
+        max_time_seconds=PRE_SAMPLE_MAX_TIME_SECONDS,
+        show_progress=show_progress
+    )
+    after_presampling = len(all_points)
+
+    trajectory_segments, staypoints = segment_trajectories_by_staypoints(
+        all_points,
+        show_progress=show_progress
+    )
+    merged_staypoints = merge_staypoints(staypoints, MERGE_STAYPOINT_RADIUS_M)
+
+    processed_trajectories = []
+
+    iterator = tqdm(
+        trajectory_segments,
+        desc="Traitement des trajets",
+        unit="trajet",
+        disable=not show_progress
+    )
+
+    for index, trajectory in enumerate(iterator):
+        trimmed_trajectory = trim_start_end_zones(trajectory, LOCAL_RADIUS_M)
+
+        if len(trimmed_trajectory) < MIN_POINTS_TRAJ:
+            continue
+
+        sampled_trajectory = (
+            trimmed_trajectory
+            .iloc[::SAMPLE_STEP]
+            .copy()
+            .reset_index(drop=True)
+        )
+
+        processed_trajectories.append({
+            "raw": trajectory,
+            "trimmed": trimmed_trajectory,
+            "sampled": sampled_trajectory
+        })
+
+        if verbose:
+            tqdm.write(
+                f"   Trajet {index + 1:02d} | "
+                f"{len(trajectory):4d} pts -> "
+                f"{len(trimmed_trajectory):4d} pts -> "
+                f"{len(sampled_trajectory):3d} pts"
+            )
+
+    refined_df = build_refined_dataframe(
+        processed_trajectories,
+        user_id=user_id,
+        source_file=source_file
+    )
+
+    stats = {
+        "user_id": user_id,
+        "source_file": source_file,
+        "valid_points": valid_points,
+        "points_after_presampling": after_presampling,
+        "presampling_removed_points": before_presampling - after_presampling,
+        "trajectory_segments": len(trajectory_segments),
+        "trajectories_kept": len(processed_trajectories),
+        "staypoints": len(staypoints),
+        "merged_staypoints": len(merged_staypoints),
+        "refined_points": len(refined_df),
+        "processing_seconds": time.time() - start_time,
+        "error": ""
+    }
+
+    return {
+        "all_points": all_points,
+        "trajectory_segments": trajectory_segments,
+        "staypoints": staypoints,
+        "merged_staypoints": merged_staypoints,
+        "processed_trajectories": processed_trajectories,
+        "refined_df": refined_df,
+        "stats": stats
+    }
+
+
+def process_csv_file_for_batch(csv_path):
+    try:
+        result = process_csv_file(csv_path, show_progress=False, verbose=False)
+        return {
+            "refined_df": result["refined_df"],
+            "stats": result["stats"]
+        }
+    except Exception as exc:
+        return {
+            "refined_df": pd.DataFrame(),
+            "stats": {
+                "user_id": get_user_id(csv_path),
+                "source_file": os.path.basename(csv_path),
+                "valid_points": 0,
+                "points_after_presampling": 0,
+                "presampling_removed_points": 0,
+                "trajectory_segments": 0,
+                "trajectories_kept": 0,
+                "staypoints": 0,
+                "merged_staypoints": 0,
+                "refined_points": 0,
+                "processing_seconds": 0,
+                "error": str(exc)
+            }
+        }
+
+
+def process_csv_file_for_random_map(csv_path):
+    try:
+        result = process_csv_file(csv_path, show_progress=False, verbose=False)
+        user_id = result["stats"]["user_id"]
+        trajectories = []
+
+        for index, trajectory_data in enumerate(result["processed_trajectories"]):
+            sampled = trajectory_data["sampled"]
+
+            if len(sampled) < 2:
+                continue
+
+            trajectory_id = index + 1
+            points = sampled[["LATITUDE", "LONGITUDE"]].values.tolist()
+            trajectories.append({
+                "user_id": user_id,
+                "trajectory_id": trajectory_id,
+                "trajectory_uid": f"{user_id}_{trajectory_id}",
+                "points": points,
+                "raw_points": len(trajectory_data["raw"]),
+                "trimmed_points": len(trajectory_data["trimmed"]),
+                "sampled_points": len(sampled)
+            })
+
+        return {
+            "trajectories": trajectories,
+            "stats": result["stats"]
+        }
+    except Exception as exc:
+        return {
+            "trajectories": [],
+            "stats": {
+                "user_id": get_user_id(csv_path),
+                "source_file": os.path.basename(csv_path),
+                "valid_points": 0,
+                "points_after_presampling": 0,
+                "presampling_removed_points": 0,
+                "trajectory_segments": 0,
+                "trajectories_kept": 0,
+                "staypoints": 0,
+                "merged_staypoints": 0,
+                "refined_points": 0,
+                "processing_seconds": 0,
+                "error": str(exc)
+            }
+        }
+
+
+def run_single_pipeline(csv_name=CSV_NAME):
     pipeline_start_time = time.time()
 
     print("\n===== GPS PIPELINE =====\n")
 
-    csv_path = os.path.join(DATA_DIR, CSV_NAME)
+    csv_path = os.path.join(DATA_DIR, csv_name)
 
     print(f"Fichier : {csv_path}")
     print(f"Existe  : {os.path.exists(csv_path)}\n")
@@ -642,78 +858,33 @@ def main():
         raise FileNotFoundError(csv_path)
 
     with tqdm(total=7, desc="Pipeline global", unit="étape") as pipeline_bar:
-        print("\n[1/7] Chargement et nettoyage des données")
-        all_points = load_and_clean_data(csv_path)
-        print(f"      → {len(all_points)} points valides")
-        pipeline_bar.update(1)
-
-        print("\n[2/7] Pré-sampling léger")
-        before_count = len(all_points)
-
-        all_points = light_presampling(
-            all_points,
-            max_distance_m=PRE_SAMPLE_MAX_DISTANCE_M,
-            max_time_seconds=PRE_SAMPLE_MAX_TIME_SECONDS
-        )
-
-        after_count = len(all_points)
-        reduction_pct = 100 * (before_count - after_count) / before_count
-
-        print(f"      → {before_count} points → {after_count} points")
-        print(f"      → réduction : {reduction_pct:.2f}%")
-        pipeline_bar.update(1)
-
-        print("\n[3/7] Détection des staypoints et segmentation")
-        trajectory_segments, staypoints = segment_trajectories_by_staypoints(all_points)
-        merged_staypoints = merge_staypoints(staypoints, MERGE_STAYPOINT_RADIUS_M)
-
-        print(f"      → {len(trajectory_segments)} trajets détectés")
-        print(f"      → {len(staypoints)} staypoints détectés")
-        print(f"      → {len(merged_staypoints)} lieux uniques après regroupement")
-        pipeline_bar.update(1)
-
-        print("\n[4/7] Trimming + sampling des trajets")
-        processed_trajectories = []
-
-        for index, trajectory in enumerate(
-            tqdm(trajectory_segments, desc="Traitement des trajets", unit="trajet")
-        ):
-            trimmed_trajectory = trim_start_end_zones(trajectory, LOCAL_RADIUS_M)
-
-            if len(trimmed_trajectory) < MIN_POINTS_TRAJ:
-                continue
-
-            sampled_trajectory = (
-                trimmed_trajectory
-                .iloc[::SAMPLE_STEP]
-                .copy()
-                .reset_index(drop=True)
-            )
-
-            processed_trajectories.append({
-                "raw": trajectory,
-                "trimmed": trimmed_trajectory,
-                "sampled": sampled_trajectory
-            })
-
-            tqdm.write(
-                f"   Trajet {index + 1:02d} | "
-                f"{len(trajectory):4d} pts → "
-                f"{len(trimmed_trajectory):4d} pts → "
-                f"{len(sampled_trajectory):3d} pts"
-            )
+        print("\n[1/4] Traitement du CSV")
+        result = process_csv_file(csv_path, show_progress=True, verbose=True)
+        all_points = result["all_points"]
+        trajectory_segments = result["trajectory_segments"]
+        staypoints = result["staypoints"]
+        merged_staypoints = result["merged_staypoints"]
+        processed_trajectories = result["processed_trajectories"]
+        refined_df = result["refined_df"]
+        stats = result["stats"]
 
         if not processed_trajectories:
             raise ValueError("Aucun trajet exploitable après traitement.")
 
-        print(f"      → {len(processed_trajectories)} trajets conservés")
-        pipeline_bar.update(1)
+        print(f"      -> {stats['valid_points']} points valides")
+        print(f"      -> {stats['points_after_presampling']} points après pré-sampling")
+        print(f"      -> {stats['trajectory_segments']} trajets détectés")
+        print(f"      -> {stats['trajectories_kept']} trajets conservés")
+        print(f"      -> {stats['staypoints']} staypoints détectés")
+        print(f"      -> {stats['merged_staypoints']} lieux uniques")
+        pipeline_bar.update(4)
 
         print("\n[5/7] Construction de la carte")
         map_object = build_map(
             all_points,
             processed_trajectories,
-            merged_staypoints
+            merged_staypoints,
+            show_progress=True
         )
 
         inject_info_panel(
@@ -725,44 +896,509 @@ def main():
             merged_staypoints
         )
 
-        print("      → Carte construite")
+        print("      -> Carte construite")
         pipeline_bar.update(1)
 
         print("\n[6/7] Sauvegarde du fichier HTML")
         output_path = os.path.abspath(OUTPUT_FILE)
         map_object.save(output_path)
-        print(f"      → {output_path}")
+        print(f"      -> {output_path}")
         pipeline_bar.update(1)
 
         print("\n[7/7] Export CSV des données raffinées")
-        refined_frames = []
-        for index, trajectory_data in enumerate(processed_trajectories):
-            trimmed = trajectory_data["trimmed"].copy()
-            trimmed["TRAJECTORY_ID"] = index + 1
-            refined_frames.append(trimmed)
-
-        refined_df = pd.concat(refined_frames, ignore_index=True)
-
         csv_output_name = OUTPUT_FILE.replace(".html", "_refined.csv")
         csv_output_path = os.path.abspath(csv_output_name)
         refined_df.to_csv(csv_output_path, index=False)
 
-        print(f"      → {len(refined_df)} points exportés")
-        print(f"      → {csv_output_path}")
+        print(f"      -> {len(refined_df)} points exportés")
+        print(f"      -> {csv_output_path}")
         pipeline_bar.update(1)
 
     total_time = time.time() - pipeline_start_time
 
     print("\n===== RÉSUMÉ =====")
-    print(f"Points valides       : {len(all_points)}")
-    print(f"Trajets détectés     : {len(trajectory_segments)}")
-    print(f"Trajets conservés    : {len(processed_trajectories)}")
-    print(f"Staypoints détectés  : {len(staypoints)}")
-    print(f"Lieux uniques        : {len(merged_staypoints)}")
+    print(f"Points valides       : {stats['valid_points']}")
+    print(f"Trajets détectés     : {stats['trajectory_segments']}")
+    print(f"Trajets conservés    : {stats['trajectories_kept']}")
+    print(f"Staypoints détectés  : {stats['staypoints']}")
+    print(f"Lieux uniques        : {stats['merged_staypoints']}")
     print(f"Fichier HTML généré  : {os.path.abspath(OUTPUT_FILE)}")
     print(f"Fichier CSV raffiné  : {csv_output_path}")
     print(f"Temps total          : {total_time:.2f} secondes")
     print("\nTerminé.")
+
+
+def run_batch_pipeline(limit=None, workers=None):
+    batch_start_time = time.time()
+    csv_paths = sorted(glob.glob(os.path.join(DATA_DIR, "*.csv")))
+
+    if limit is not None:
+        csv_paths = csv_paths[:limit]
+
+    if not csv_paths:
+        raise FileNotFoundError(f"Aucun CSV trouvé dans {DATA_DIR}")
+
+    if workers is None:
+        workers = max(1, (os.cpu_count() or 2) - 1)
+
+    output_path = os.path.abspath(BATCH_OUTPUT_FILE)
+    summary_path = os.path.abspath(BATCH_SUMMARY_FILE)
+
+    print("\n===== GPS PIPELINE BATCH =====\n")
+    print(f"Dossier source : {DATA_DIR}")
+    print(f"Fichiers CSV   : {len(csv_paths)}")
+    print(f"Workers        : {workers}")
+    print(f"Sortie CSV     : {output_path}")
+    print(f"Résumé         : {summary_path}\n")
+
+    stats_rows = []
+    wrote_header = False
+    global_trajectory_offset = 0
+
+    with ProcessPoolExecutor(max_workers=workers) as executor:
+        futures = {
+            executor.submit(process_csv_file_for_batch, csv_path): csv_path
+            for csv_path in csv_paths
+        }
+
+        for future in tqdm(
+            as_completed(futures),
+            total=len(futures),
+            desc="Traitement batch",
+            unit="csv"
+        ):
+            result = future.result()
+            refined_df = result["refined_df"]
+            stats = result["stats"]
+
+            if not refined_df.empty:
+                trajectory_uids = refined_df["TRAJECTORY_UID"].drop_duplicates()
+                uid_to_global_id = {
+                    uid: global_trajectory_offset + index + 1
+                    for index, uid in enumerate(trajectory_uids)
+                }
+                refined_df["GLOBAL_TRAJECTORY_ID"] = (
+                    refined_df["TRAJECTORY_UID"].map(uid_to_global_id)
+                )
+                global_trajectory_offset += len(trajectory_uids)
+
+                refined_df.to_csv(
+                    output_path,
+                    mode="w" if not wrote_header else "a",
+                    header=not wrote_header,
+                    index=False
+                )
+                wrote_header = True
+
+            stats_rows.append(stats)
+
+    summary_df = pd.DataFrame(stats_rows).sort_values("source_file")
+    summary_df.to_csv(summary_path, index=False)
+
+    total_time = time.time() - batch_start_time
+    errors = summary_df["error"].astype(bool).sum()
+
+    print("\n===== RÉSUMÉ BATCH =====")
+    print(f"CSV traités              : {len(summary_df)}")
+    print(f"Erreurs                  : {errors}")
+    print(f"Trajets conservés        : {summary_df['trajectories_kept'].sum()}")
+    print(f"Points raffinés exportés : {summary_df['refined_points'].sum()}")
+    print(f"Fichier global           : {output_path}")
+    print(f"Résumé par CSV           : {summary_path}")
+    print(f"Temps total              : {total_time:.2f} secondes")
+    print("\nTerminé.")
+
+
+def build_random_sample_map(trajectories, stats_rows, output_path, sample_size, seed):
+    all_latitudes = [
+        point[0]
+        for trajectory in trajectories
+        for point in trajectory["points"]
+    ]
+    all_longitudes = [
+        point[1]
+        for trajectory in trajectories
+        for point in trajectory["points"]
+    ]
+
+    if not all_latitudes or not all_longitudes:
+        raise ValueError("Aucune trajectoire exploitable pour construire la carte.")
+
+    map_object = folium.Map(
+        location=[
+            sum(all_latitudes) / len(all_latitudes),
+            sum(all_longitudes) / len(all_longitudes)
+        ],
+        zoom_start=10,
+        tiles=None,
+        control_scale=True,
+        prefer_canvas=True
+    )
+
+    folium.TileLayer("CartoDB positron", name="Fond clair").add_to(map_object)
+    folium.TileLayer("CartoDB dark_matter", name="Fond sombre").add_to(map_object)
+    folium.TileLayer("OpenStreetMap", name="OpenStreetMap").add_to(map_object)
+
+    for index, trajectory in enumerate(
+        tqdm(trajectories, desc="Ajout des trajets à la carte", unit="trajet")
+    ):
+        color = COLORS[index % len(COLORS)]
+        tooltip = (
+            f"{trajectory['trajectory_uid']} | "
+            f"{trajectory['raw_points']} pts bruts -> "
+            f"{trajectory['trimmed_points']} trim -> "
+            f"{trajectory['sampled_points']} affichés"
+        )
+
+        folium.PolyLine(
+            trajectory["points"],
+            color=color,
+            weight=3,
+            opacity=0.65,
+            tooltip=tooltip
+        ).add_to(map_object)
+
+    Fullscreen().add_to(map_object)
+    MiniMap(toggle_display=True, position="bottomright").add_to(map_object)
+    MousePosition(
+        position="bottomleft",
+        separator=" | ",
+        prefix="Coordonnées",
+        num_digits=5
+    ).add_to(map_object)
+    folium.LayerControl(collapsed=True).add_to(map_object)
+
+    map_object.fit_bounds([
+        [min(all_latitudes), min(all_longitudes)],
+        [max(all_latitudes), max(all_longitudes)]
+    ])
+
+    successful_users = sum(not row["error"] for row in stats_rows)
+    panel_html = f"""
+{{% macro html(this, kwargs) %}}
+<style>
+#gps-panel {{
+    position: fixed;
+    top: 20px;
+    left: 20px;
+    width: 320px;
+    z-index: 9999;
+    background: white;
+    border-radius: 12px;
+    box-shadow: 0 8px 30px rgba(0,0,0,0.15);
+    padding: 16px;
+    font-family: Arial, sans-serif;
+    color: #0f172a;
+}}
+#gps-panel h2 {{
+    margin: 0 0 10px;
+    font-size: 17px;
+}}
+#gps-panel p {{
+    margin: 6px 0;
+    color: #475569;
+    font-size: 13px;
+    line-height: 1.45;
+}}
+</style>
+<div id="gps-panel">
+    <h2>Échantillon GPS aléatoire</h2>
+    <p><b>{sample_size}</b> CSV tirés au hasard dans <b>gps_dataset</b>.</p>
+    <p><b>{successful_users}</b> utilisateurs traités sans erreur.</p>
+    <p><b>{len(trajectories)}</b> trajets affichés après trimming et sampling.</p>
+    <p>Seed : <b>{seed}</b></p>
+</div>
+{{% endmacro %}}
+"""
+
+    panel = MacroElement()
+    panel._template = Template(panel_html)
+    map_object.get_root().add_child(panel)
+    map_object.save(output_path)
+
+
+def run_random_map_pipeline(sample_size=50, seed=42, workers=None, output_file=None):
+    start_time = time.time()
+    csv_paths = sorted(glob.glob(os.path.join(DATA_DIR, "*.csv")))
+
+    if not csv_paths:
+        raise FileNotFoundError(f"Aucun CSV trouvé dans {DATA_DIR}")
+
+    sample_size = min(sample_size, len(csv_paths))
+    rng = random.Random(seed)
+    selected_paths = rng.sample(csv_paths, sample_size)
+
+    if workers is None:
+        workers = max(1, min(sample_size, (os.cpu_count() or 2) - 1))
+
+    output_path = os.path.abspath(output_file or RANDOM_MAP_OUTPUT_FILE)
+    summary_path = os.path.abspath(RANDOM_MAP_SUMMARY_FILE)
+
+    print("\n===== CARTE GPS ALÉATOIRE =====\n")
+    print(f"Dossier source : {DATA_DIR}")
+    print(f"CSV tirés      : {sample_size}")
+    print(f"Seed           : {seed}")
+    print(f"Workers        : {workers}")
+    print(f"Carte HTML     : {output_path}")
+    print(f"Résumé         : {summary_path}\n")
+
+    all_trajectories = []
+    stats_rows = []
+
+    with ProcessPoolExecutor(max_workers=workers) as executor:
+        futures = {
+            executor.submit(process_csv_file_for_random_map, csv_path): csv_path
+            for csv_path in selected_paths
+        }
+
+        for future in tqdm(
+            as_completed(futures),
+            total=len(futures),
+            desc="Traitement carte random",
+            unit="csv"
+        ):
+            result = future.result()
+            all_trajectories.extend(result["trajectories"])
+            stats_rows.append(result["stats"])
+
+    summary_df = pd.DataFrame(stats_rows).sort_values("source_file")
+    summary_df.to_csv(summary_path, index=False)
+
+    build_random_sample_map(
+        all_trajectories,
+        stats_rows,
+        output_path=output_path,
+        sample_size=sample_size,
+        seed=seed
+    )
+
+    errors = summary_df["error"].astype(bool).sum()
+    total_time = time.time() - start_time
+
+    print("\n===== RÉSUMÉ CARTE RANDOM =====")
+    print(f"CSV sélectionnés       : {sample_size}")
+    print(f"Erreurs                : {errors}")
+    print(f"Trajets affichés       : {len(all_trajectories)}")
+    print(f"Carte HTML             : {output_path}")
+    print(f"Résumé par CSV         : {summary_path}")
+    print(f"Temps total            : {total_time:.2f} secondes")
+    print("\nTerminé.")
+
+
+def load_random_trajectories_from_refined_csv(refined_csv_path, sample_size=50, seed=42):
+    if not os.path.exists(refined_csv_path):
+        raise FileNotFoundError(refined_csv_path)
+
+    refined_df = pd.read_csv(refined_csv_path)
+
+    if refined_df.empty:
+        raise ValueError(f"Le fichier raffiné est vide : {refined_csv_path}")
+
+    required_columns = {"USER_ID", "TRAJECTORY_UID", "LATITUDE", "LONGITUDE"}
+    missing_columns = required_columns - set(refined_df.columns)
+
+    if missing_columns:
+        raise ValueError(
+            "Colonnes manquantes dans le CSV raffiné : "
+            + ", ".join(sorted(missing_columns))
+        )
+
+    user_ids = sorted(refined_df["USER_ID"].dropna().unique())
+    sample_size = min(sample_size, len(user_ids))
+    selected_users = set(random.Random(seed).sample(user_ids, sample_size))
+    selected_df = refined_df[refined_df["USER_ID"].isin(selected_users)].copy()
+
+    if "POINT_INDEX" in selected_df.columns:
+        selected_df = selected_df.sort_values(["TRAJECTORY_UID", "POINT_INDEX"])
+    elif "DATETIME" in selected_df.columns:
+        selected_df = selected_df.sort_values(["TRAJECTORY_UID", "DATETIME"])
+
+    trajectories = []
+
+    for trajectory_uid, trajectory_df in selected_df.groupby("TRAJECTORY_UID", sort=False):
+        sampled_df = trajectory_df.iloc[::SAMPLE_STEP]
+
+        if len(sampled_df) < 2:
+            continue
+
+        user_id = sampled_df["USER_ID"].iloc[0]
+        trajectory_id = (
+            sampled_df["TRAJECTORY_ID"].iloc[0]
+            if "TRAJECTORY_ID" in sampled_df.columns
+            else ""
+        )
+
+        trajectories.append({
+            "user_id": user_id,
+            "trajectory_id": trajectory_id,
+            "trajectory_uid": trajectory_uid,
+            "points": sampled_df[["LATITUDE", "LONGITUDE"]].values.tolist(),
+            "raw_points": len(trajectory_df),
+            "trimmed_points": len(trajectory_df),
+            "sampled_points": len(sampled_df)
+        })
+
+    stats_rows = [
+        {"error": "", "user_id": user_id}
+        for user_id in selected_users
+    ]
+
+    return trajectories, stats_rows, sample_size
+
+
+def run_random_map_from_batch_output(sample_size=DEFAULT_RANDOM_MAP_USERS, seed=42, output_file=None):
+    start_time = time.time()
+    refined_csv_path = os.path.abspath(BATCH_OUTPUT_FILE)
+    output_path = os.path.abspath(output_file or RANDOM_MAP_OUTPUT_FILE)
+
+    print("\n===== CARTE GPS DEPUIS LE BATCH =====\n")
+    print(f"CSV raffiné    : {refined_csv_path}")
+    print(f"Utilisateurs   : {sample_size}")
+    print(f"Seed           : {seed}")
+    print(f"Carte HTML     : {output_path}\n")
+
+    trajectories, stats_rows, actual_sample_size = load_random_trajectories_from_refined_csv(
+        refined_csv_path,
+        sample_size=sample_size,
+        seed=seed
+    )
+
+    build_random_sample_map(
+        trajectories,
+        stats_rows,
+        output_path=output_path,
+        sample_size=actual_sample_size,
+        seed=seed
+    )
+
+    total_time = time.time() - start_time
+
+    print("\n===== RÉSUMÉ CARTE BATCH =====")
+    print(f"Utilisateurs tirés     : {actual_sample_size}")
+    print(f"Trajets affichés       : {len(trajectories)}")
+    print(f"Carte HTML             : {output_path}")
+    print(f"Temps total            : {total_time:.2f} secondes")
+    print("\nTerminé.")
+
+
+def run_default_pipeline(
+    workers=DEFAULT_WORKERS,
+    sample_size=DEFAULT_RANDOM_MAP_USERS,
+    seed=42,
+    recompute_map=False
+):
+    if os.path.exists(BATCH_OUTPUT_FILE) and not recompute_map:
+        run_random_map_from_batch_output(
+            sample_size=sample_size,
+            seed=seed,
+            output_file=RANDOM_MAP_OUTPUT_FILE
+        )
+        return
+
+    run_random_map_pipeline(
+        sample_size=sample_size,
+        seed=seed,
+        workers=workers,
+        output_file=RANDOM_MAP_OUTPUT_FILE
+    )
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="Pipeline de traitement des trajectoires GPS."
+    )
+    parser.add_argument(
+        "--batch",
+        action="store_true",
+        help="Traite plusieurs CSV de gps_dataset en parallèle."
+    )
+    parser.add_argument(
+        "--single",
+        action="store_true",
+        help="Traite un seul CSV et génère la carte détaillée."
+    )
+    parser.add_argument(
+        "--random-map",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Génère une carte avec N CSV tirés aléatoirement dans gps_dataset."
+    )
+    parser.add_argument(
+        "--csv",
+        default=CSV_NAME,
+        help="Nom du CSV à traiter en mode fichier unique."
+    )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="Nombre maximum de CSV à traiter en mode batch."
+    )
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=DEFAULT_WORKERS,
+        help="Nombre de processus parallèles."
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=42,
+        help="Seed utilisée pour le tirage aléatoire de --random-map."
+    )
+    parser.add_argument(
+        "--random-map-output",
+        default=None,
+        help="Nom du fichier HTML à générer avec --random-map."
+    )
+    parser.add_argument(
+        "--map-only",
+        action="store_true",
+        help="Genere seulement la carte depuis all_refined_trajectories.csv existant."
+    )
+    parser.add_argument(
+        "--recompute-map",
+        action="store_true",
+        help="Force --random-map a retraiter les CSV bruts au lieu de reutiliser le batch."
+    )
+    return parser.parse_args()
+
+
+def main():
+    args = parse_args()
+
+    if args.map_only:
+        run_random_map_from_batch_output(
+            sample_size=args.random_map or DEFAULT_RANDOM_MAP_USERS,
+            seed=args.seed,
+            output_file=args.random_map_output
+        )
+    elif args.single:
+        run_single_pipeline(csv_name=args.csv)
+    elif args.random_map is not None:
+        if os.path.exists(BATCH_OUTPUT_FILE) and not args.recompute_map:
+            run_random_map_from_batch_output(
+                sample_size=args.random_map,
+                seed=args.seed,
+                output_file=args.random_map_output
+            )
+        else:
+            run_random_map_pipeline(
+                sample_size=args.random_map,
+                seed=args.seed,
+                workers=args.workers,
+                output_file=args.random_map_output
+            )
+    elif args.batch:
+        run_batch_pipeline(limit=args.limit, workers=args.workers)
+    else:
+        run_default_pipeline(
+            workers=args.workers,
+            sample_size=DEFAULT_RANDOM_MAP_USERS,
+            seed=args.seed,
+            recompute_map=args.recompute_map
+        )
 
 
 if __name__ == "__main__":

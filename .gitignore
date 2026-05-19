@@ -5,3 +5,5 @@ analyse&test/traj_12_3332_sampling_comparison.html
 map_12_3332_segmented_pipeline.html
 map_12_3332_segmented_pipeline_refined.csv
 *.html
+*.csv
+*.pyc
