@@ -372,12 +372,19 @@ const visibleIds = new Set();   // ids actuellement sur la carte
 const selectedIds = new Set();  // ids cochés en mode multi-sélection
 let filterQuery  = "";
 let multiMode    = false;       // false = solo/exclusif, true = multi
+let booted       = false;
 
-/* ── 1. Attendre que la map Leaflet soit prête ──────────────────── */
+/* ── 1. Attendre que la map Leaflet et le panneau soient prêts ───── */
 function waitForMap() {{
   /* Folium expose la map sous son nom généré ex: map_abc123 */
   const mapVar = "{map_name}";
-  if (typeof window[mapVar] !== "undefined") {{
+  if (
+    !booted &&
+    typeof window[mapVar] !== "undefined" &&
+    document.getElementById("gps-panel") &&
+    document.getElementById("btn-show-all")
+  ) {{
+    booted = true;
     MAP = window[mapVar];
     boot();
   }} else {{
