@@ -534,6 +534,8 @@ def make_assets() -> dict[str, Path]:
         "pipeline": ASSET_DIR / "schema_suite_pipeline.png",
         "grid": ASSET_DIR / "schema_grille_jaccard.png",
         "segments_schema": ASSET_DIR / "schema_segments_ponderes.png",
+        "jaccard_vs_segments": ASSET_DIR / "schema_jaccard_vs_segments.png",
+        "jaccard_study": BASE / "jaccard_threshold_study" / "jaccard_threshold_report_curve.png",
         "clusters": ASSET_DIR / "exemple_clusters.png",
         "segments": ASSET_DIR / "segments_ponderes.png",
         "profiles": ASSET_DIR / "profils_barres.png",
@@ -802,6 +804,15 @@ def main() -> None:
         ],
     )
     doc.add_image(assets["table"], caption="Extrait des clusters les plus partagés dans l'expérience focalisée.")
+    if assets["jaccard_study"].exists():
+        doc.add_paragraph("Choix du seuil Jaccard", style="Heading2")
+        doc.add_paragraph(
+            "Pour choisir le seuil, j’ai testé plusieurs valeurs entre 0,25 et 0,60 en gardant la même contrainte minimale de 5 cellules communes. "
+            "Un seuil trop faible fusionne trop de trajectoires dans de très gros clusters, ce qui devient difficile à interpréter. "
+            "Un seuil trop élevé fragmente fortement les résultats et laisse beaucoup de trajectoires isolées. "
+            "La valeur 0,42 correspond au compromis retenu : elle conserve des clusters collectifs exploitables sans produire un cluster géant qui mélange presque toute la zone."
+        )
+        doc.add_image(assets["jaccard_study"], caption="Étude de sensibilité utilisée pour justifier le choix du seuil Jaccard = 0,42.")
 
     add_section(
         doc,
@@ -886,6 +897,10 @@ def main() -> None:
             "La partie profils commence à faire le lien entre mobilité spatiale et caractéristiques des usagers. Pour l’instant, je considère cette partie comme un outil d’exploration : elle montre que la pipeline complète fonctionne, mais les interprétations doivent encore être consolidées par des tests de paramètres et une analyse plus fine des cartes.",
         ],
     )
+
+    if assets["jaccard_vs_segments"].exists():
+        doc.add_paragraph("Schema recapitulatif : Jaccard et segments", style="Heading1")
+        doc.add_image(assets["jaccard_vs_segments"], caption="Difference entre Jaccard et segments ponderes : le premier compare les trajets complets, les seconds localisent les portions communes.")
 
     doc.add_paragraph("Conclusion rapide", style="Heading1")
     doc.add_paragraph(
