@@ -2,3 +2,6 @@ pandas
 folium
 tqdm
 branca
+matplotlib
+playwright
+Pillow

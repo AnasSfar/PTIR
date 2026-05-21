@@ -1,9 +1,44 @@
+# Donnees sources et sorties lourdes
 NetMob25CleanedData/
+all_refined_trajectories.csv
+12_3332.csv
 *.log
-analyse&test/traj_12_3332_trim_comparison.html
-analyse&test/traj_12_3332_sampling_comparison.html
-map_12_3332_segmented_pipeline.html
-map_12_3332_segmented_pipeline_refined.csv
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Node / dependances locales
+node_modules/
+
+# Exports lourds ou regenerables
 *.html
 *.csv
-*.pyc
+*.docx
+
+# Garder les petits CSV de synthese utiles au rapport
+!sample_data/
+!sample_data/*.csv
+!results/
+!results/jaccard_threshold_study/
+!results/jaccard_threshold_study/jaccard_threshold_sensitivity.csv
+!results/focused_clustering_output/
+!results/focused_clustering_output/focused_general_summary.csv
+!results/focused_clustering_output/focused_profile_summary.csv
+!results/focused_clustering_output/selected_same_zone_users.csv
+!results/report_assets/profile_maps/profile_map_captures_summary.csv
+
+# Garder les figures et captures de resultats
+!results/report_assets/
+!results/report_assets/**/*.png
+!results/jaccard_threshold_study/**/*.png
+!analyse&test/gps_decision_graphs/*.png
+!analyse&test/gps_trim_eda_outputs/*.png
+!analyse&test/gps_decision_graphs/*.txt
+!analyse&test/gps_trim_eda_outputs/*.txt
+
+# Anciennes cartes de test regenerables
+analyse&test/traj_12_3332_trim_comparison.html
+analyse&test/traj_12_3332_sampling_comparison.html
