@@ -13,12 +13,13 @@ from folium.plugins import Fullscreen, MiniMap, MeasureControl
 # PARAMÃˆTRES
 # =========================
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 INPUT_PATH = os.path.join(BASE_DIR, "all_refined_trajectories.csv")
-OUTPUT_DIR = os.path.join(BASE_DIR, "common_corridors_output")
+OUTPUT_DIR = os.path.join(BASE_DIR, "results", "common_corridors_output")
 SEGMENTS_CSV_FOR_CORRIDORS = os.path.join(
     BASE_DIR,
+    "results",
     "common_paths_output",
     "weighted_common_segments.csv"
 )

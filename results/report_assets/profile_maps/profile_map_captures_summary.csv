@@ -1,0 +1,9 @@
+file,criterion,value,title,lines,trips,max_users_in_displayed_cluster
+sex_man.png,SEX,Man,Profil sexe : hommes,6,444,68
+sex_woman.png,SEX,Woman,Profil sexe : femmes,6,418,66
+mode_walking.png,DOMINANT_MODE,WALKING,Mode dominant : marche,6,357,51
+mode_subway.png,DOMINANT_MODE,SUBWAY,Mode dominant : metro,6,79,14
+mode_bike.png,DOMINANT_MODE,BIKE,Mode dominant : velo,6,108,14
+age_35_44.png,AGE_GROUP,35-44,Age : 35-44 ans,6,114,15
+navigo_yes.png,NAVIGO_SUB,Yes,Abonnement Navigo : oui,6,507,83
+no_car.png,NB_CAR_GROUP,0 car,Foyer sans voiture,6,890,131

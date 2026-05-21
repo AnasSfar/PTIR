@@ -13,10 +13,10 @@ from xml.sax.saxutils import escape
 import matplotlib.pyplot as plt
 
 
-BASE = Path(__file__).resolve().parent
+BASE = Path(__file__).resolve().parents[1]
 OUT = BASE / "PTIR Anas - suite clustering.docx"
-ASSET_DIR = BASE / "report_assets_suite"
-FOCUSED_DIR = BASE / "focused_clustering_output"
+ASSET_DIR = BASE / "results" / "report_assets"
+FOCUSED_DIR = BASE / "results" / "focused_clustering_output"
 
 
 PALETTE = {
@@ -535,7 +535,7 @@ def make_assets() -> dict[str, Path]:
         "grid": ASSET_DIR / "schema_grille_jaccard.png",
         "segments_schema": ASSET_DIR / "schema_segments_ponderes.png",
         "jaccard_vs_segments": ASSET_DIR / "schema_jaccard_vs_segments.png",
-        "jaccard_study": BASE / "jaccard_threshold_study" / "jaccard_threshold_report_curve.png",
+        "jaccard_study": BASE / "results" / "jaccard_threshold_study" / "jaccard_threshold_report_curve.png",
         "clusters": ASSET_DIR / "exemple_clusters.png",
         "segments": ASSET_DIR / "segments_ponderes.png",
         "profiles": ASSET_DIR / "profils_barres.png",

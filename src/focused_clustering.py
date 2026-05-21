@@ -11,14 +11,14 @@ from folium.plugins import Fullscreen, MiniMap, MousePosition, MeasureControl
 from tqdm import tqdm
 
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA_DIR = os.path.join(BASE_DIR, "NetMob25CleanedData", "NetMob25CleanedData")
 
 REFINED_FILE = os.path.join(BASE_DIR, "all_refined_trajectories.csv")
 INDIVIDUALS_FILE = os.path.join(DATA_DIR, "individuals_dataset.csv")
 DISPLACEMENTS_FILE = os.path.join(DATA_DIR, "displacements_dataset.csv")
 
-OUTPUT_DIR = os.path.join(BASE_DIR, "focused_clustering_output")
+OUTPUT_DIR = os.path.join(BASE_DIR, "results", "focused_clustering_output")
 SELECTED_USERS_FILE = os.path.join(OUTPUT_DIR, "selected_same_zone_users.csv")
 FOCUSED_POINTS_FILE = os.path.join(OUTPUT_DIR, "focused_50_refined_trajectories.csv")
 GENERAL_CLUSTERS_FILE = os.path.join(OUTPUT_DIR, "focused_general_clusters.csv")
@@ -1217,8 +1217,8 @@ def build_general_map(points, clusters, summary, segments, selected_users, args)
     print(f"Carte generale       : {os.path.abspath(args.general_map_output)}")
 
 
-def load_profiles(selected_users):
-    individuals = pd.read_csv(INDIVIDUALS_FILE)
+def load_profiles(selected_users, args):
+    individuals = pd.read_csv(args.individuals_input)
     individuals["ID"] = individuals["ID"].astype(str)
     profiles = selected_users[["USER_ID"]].merge(
         individuals,
@@ -1233,8 +1233,8 @@ def load_profiles(selected_users):
         if column in profiles:
             profiles[column] = profiles[column].apply(bool_label)
 
-    if os.path.exists(DISPLACEMENTS_FILE):
-        displacements = pd.read_csv(DISPLACEMENTS_FILE, usecols=["ID", "Main_Mode"])
+    if os.path.exists(args.displacements_input):
+        displacements = pd.read_csv(args.displacements_input, usecols=["ID", "Main_Mode"])
         displacements = displacements.dropna(subset=["ID", "Main_Mode"])
         displacements["ID"] = displacements["ID"].astype(str)
         dominant = (
@@ -1391,6 +1391,8 @@ def parse_args():
     parser.add_argument("--profile-map-max-segments", type=int, default=900)
     parser.add_argument("--selected-users-output", default=SELECTED_USERS_FILE)
     parser.add_argument("--focused-output", default=FOCUSED_POINTS_FILE)
+    parser.add_argument("--individuals-input", default=INDIVIDUALS_FILE)
+    parser.add_argument("--displacements-input", default=DISPLACEMENTS_FILE)
     parser.add_argument("--general-output", default=GENERAL_CLUSTERS_FILE)
     parser.add_argument("--general-summary-output", default=GENERAL_SUMMARY_FILE)
     parser.add_argument("--segments-output", default=GENERAL_SEGMENTS_FILE)
@@ -1470,7 +1472,7 @@ def main():
 
     build_general_map(points, clusters, summary, segments, selected_users, args)
 
-    profiles = load_profiles(selected_users)
+    profiles = load_profiles(selected_users, args)
     profile_summary = build_profile_summary(points, profiles, args)
     profile_summary.to_csv(args.profile_summary_output, index=False)
     print(f"Resume profils       : {os.path.abspath(args.profile_summary_output)}")

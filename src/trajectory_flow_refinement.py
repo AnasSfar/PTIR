@@ -9,7 +9,7 @@ from folium.plugins import Fullscreen, MiniMap, MousePosition
 from tqdm import tqdm
 
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 INPUT_FILE = os.path.join(BASE_DIR, "all_refined_trajectories.csv")
 OUTPUT_FILE = "shared_trajectory_segments.csv"

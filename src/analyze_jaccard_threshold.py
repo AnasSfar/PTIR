@@ -7,9 +7,9 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 
 
-BASE = Path(__file__).resolve().parent
-INPUT = BASE / "focused_clustering_output" / "focused_general_clusters.csv"
-OUT_DIR = BASE / "jaccard_threshold_study"
+BASE = Path(__file__).resolve().parents[1]
+INPUT = BASE / "results" / "focused_clustering_output" / "focused_general_clusters.csv"
+OUT_DIR = BASE / "results" / "jaccard_threshold_study"
 THRESHOLDS = [0.25, 0.30, 0.35, 0.38, 0.40, 0.42, 0.45, 0.48, 0.50, 0.55, 0.60]
 MIN_SHARED_CELLS = 5
 PAIR_MIN_THRESHOLD = min(THRESHOLDS)

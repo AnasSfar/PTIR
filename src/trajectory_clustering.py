@@ -10,7 +10,7 @@ from branca.element import MacroElement, Template
 from folium.plugins import Fullscreen, MiniMap, MousePosition
 
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 REFINED_TRAJECTORIES_FILE = os.path.join(BASE_DIR, "all_refined_trajectories.csv")
 INDIVIDUALS_FILE = os.path.join(

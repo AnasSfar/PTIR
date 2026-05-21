@@ -4,8 +4,8 @@ import matplotlib.pyplot as plt
 from matplotlib.patches import FancyArrowPatch, Rectangle
 
 
-BASE = Path(__file__).resolve().parent
-OUT = BASE / "report_assets_suite" / "schema_jaccard_vs_segments.png"
+BASE = Path(__file__).resolve().parents[1]
+OUT = BASE / "results" / "report_assets" / "schema_jaccard_vs_segments.png"
 
 
 def box(ax, x, y, label, color, w=0.085, h=0.085):
