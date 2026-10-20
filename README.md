@@ -1,4 +1,4 @@
-<sub>🇬🇧 English · [🇫🇷 Français](README.fr.md)</sub>
+<sub>English · [Français](README.fr.md)</sub>
 
 # PTIR · Human mobility analysis from GPS trajectories
 
