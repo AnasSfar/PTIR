@@ -1,3 +1,5 @@
+<sub>🇬🇧 English · [🇫🇷 Français](README.fr.md)</sub>
+
 # PTIR · Human mobility analysis from GPS trajectories
 
 **Which routes do people in Paris actually share, and do they differ by age, sex or transport mode?**
